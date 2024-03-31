@@ -1,0 +1,686 @@
+---
+title: "Sports Analytics"
+author: "Mauro Bouzon"
+date: "2022-12-20"
+output:
+  pdf_document: default
+  word_document: default
+  html_document: default
+---
+
+### Introducción:
+
+En este trabajo me propongo analizar de forma sencilla un partido de fútbol mediante
+los datos de StatsBomb. En este caso utilizaremos los datos correspondientes al 
+partido del mundial 2018 entre Argentina y Francia, sin embargo este código también 
+podría utilizarse fácilmente para analizar cualquier otro partido.
+
+En este trabajo analizaremos aspectos sencillos como la conformación de los equipos, 
+efectividad de pases de los jugadores o gráficos de tiros.
+
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+library(StatsBombR)
+library(tidyverse)
+library(SBpitch)
+library(ggforce)
+library(soccermatics)
+library(kableExtra)
+library(tinytex)
+```
+
+```{r message=FALSE, warning=FALSE, echo=FALSE, message=FALSE}
+datos <- FreeCompetitions() %>% 
+         filter(competition_id==43 & season_id==3) %>% 
+         FreeMatches() %>%
+         filter(match_id==7580) %>% 
+         get.matchFree()
+
+
+```
+\newpage 
+
+## Formaciones y alineaciones.
+
+En este apartado creo una tabla con los nombres de los jugadores por equipo y su 
+conformación en el 11 titular.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+Formaciones_FR <- datos$tactics.lineup[[1]]$player.name
+Alineaciones_FR <- datos$tactics.lineup[[1]]$position.name
+
+
+Formaciones_AR <- datos$tactics.lineup[[2]]$player.name
+Alineaciones_AR <- datos$tactics.lineup[[2]]$position.name
+
+cuadro <- cbind(Formaciones_AR,Alineaciones_AR, Formaciones_FR,Alineaciones_FR)
+
+colnames(cuadro)<-c("Formaciones AR","Posiciones AR","Formaciones FR","Alineaciones FR")
+
+Formaciones_AR %>% kbl() %>% kable_classic_2(full_width = F)
+Formaciones_FR %>% kbl() %>% kable_classic_2(full_width = F)
+
+
+```
+
+\newpage 
+
+## Cambios:
+
+Luego de analizar el equipo incial, busco saber quienes fueron los recambios, es
+decir, quienes salieron, quienes entraron y en que minuto.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+cambios<- datos %>% filter(!is.na(substitution.outcome.name) |
+                             !is.na(substitution.replacement.name) ) %>%
+          select(player.name, substitution.replacement.name, team.name, minute)
+
+cambios_FR <- cambios %>% filter(team.name=="France") %>%  select(-team.name)
+
+cambios_AR <- cambios %>% filter(team.name=="Argentina") %>%  select(-team.name)
+
+cambios_tot <- cbind(cambios_AR, cambios_FR)
+colnames(cambios_tot)<-c("Sale AR","Entra AR","min","Sale FR","Entra FR","min" )
+
+cambios_AR %>% kbl() %>% kable_classic_2(full_width = F)
+
+cambios_FR %>% kbl() %>% kable_classic_2(full_width = F)
+
+```
+
+\newpage 
+
+
+## Posesión:
+
+En cuanto a la posesión, busqué averiguar no solamente los porcentajes de posesión 
+que tuvo cada equipo, si no también cuantos minutos tuvo la pelota cada equipo, lo cual 
+fue un poco llamativo ya que por 37 minutos ningún equipo tuvo la pelota o por lo menos
+el control de este.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+posesion <- datos %>% select(duration,possession_team.name) %>% filter(!is.na(duration) )
+
+pos_Fr <- 0
+pos_Ar <- 0
+
+for (i in 1:length(posesion$duration)){
+  if (posesion$possession_team.name[i] == "France"){
+    pos_Fr<- pos_Fr + posesion$duration[i]
+  }else{
+    pos_Ar<- pos_Ar + posesion$duration[i]
+  }
+}
+
+pos_Fr <- pos_Fr/60
+pos_Ar<-pos_Ar/60
+
+por_pos_Fr<-(pos_Fr/(pos_Ar+pos_Fr))*100
+por_pos_Ar<-(pos_Ar/(pos_Fr+pos_Ar))*100
+
+posesiones_AR<-c(pos_Ar,por_pos_Ar)
+posesiones_FR<-c(pos_Fr,por_pos_Fr)
+
+posesiones<- cbind(posesiones_AR,posesiones_FR)
+rownames(posesiones)<-c("min","%")
+colnames(posesiones)<-c("Argentina","Francia")
+
+posesiones %>% kbl() %>% kable_classic_2(full_width = F)
+
+```
+
+
+## Faltas:
+
+Busco averiguar cuantas faltas realizó cada equipo, las amarillas que le sacaron 
+y las tarjetas rojas (que en este caso no hubieron).
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+
+amarillas<- datos %>% select(minute, foul_committed.card.name, 
+                             bad_behaviour.card.name, team.name, player.name) %>% 
+            filter(foul_committed.card.name=="Yellow Card" |
+                     bad_behaviour.card.name=="Yellow Card")
+
+
+rojas<- datos %>% select(minute, foul_committed.card.name,
+                         bad_behaviour.card.name, team.name, player.name) %>% 
+  filter(foul_committed.card.name=="Red Card" | 
+           bad_behaviour.card.name=="Red Card")
+
+amarillas_AR <- 0
+amarillas_FR <- 0
+
+for (i in 1:length(amarillas$team.name)){
+  if (amarillas$team.name[i]=="Argentina"){
+    amarillas_AR = amarillas_AR + 1
+  }else{
+    amarillas_FR = amarillas_FR + 1
+  }
+}
+rojas_AR <- 0
+rojas_FR <- 0
+
+faltas <- datos %>% filter(type.name=="Foul Committed")
+faltas_AR <- datos %>% filter(type.name=="Foul Committed", team.name=="Argentina") 
+faltas_FR <- datos %>% filter(type.name=="Foul Committed", team.name=="France") 
+
+tot_faltas_AR <- length(faltas_AR$type.name)
+tot_faltas_FR <- length(faltas_FR$type.name)
+
+faltas_tar_AR <- c(tot_faltas_AR, amarillas_AR, rojas_AR)
+faltas_tar_FR <- c(tot_faltas_FR, amarillas_FR, rojas_FR)
+
+tabla_faltas<-cbind(faltas_tar_AR,faltas_tar_FR)
+colnames(tabla_faltas)<-c("Argentina","Francia")
+rownames(tabla_faltas)<-c("Faltas","Amarillas","Rojas")
+
+tabla_faltas %>% kbl() %>% kable_classic_2(full_width = F)
+
+```
+
+Ahora aprovenchando que tengo las coordenadas de las faltas, realizo un gráfico 
+donde se muestren las faltas de cada equipo, las cuales se diferenciarán por el
+color.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+for(i in 1:length(faltas$location)){
+  faltas$location.x[i] <- faltas$location[[i]][1]
+  faltas$location.y[i] <- faltas$location[[i]][2]
+  faltas$end_location.x[i] <- faltas$pass.end_location[[i]][1]
+  faltas$end_location.y[i] <- faltas$pass.end_location[[i]][2]
+  
+}
+
+create_Pitch(grass_colour = "#EAEAEA", line_colour =  "#000000",
+             background_colour = "#EAEAEA", goal_colour = "#EAEAEA") +
+  geom_point(data = faltas, 
+             aes(x = location.x, y = location.y,
+                 colour=team.name,size=1.0)) +
+  labs(title = "Faltas por equipo", color="Equipo") +
+  coord_fixed(ratio = 105/100) +
+  theme(legend.position = "bottom")
+```
+
+
+\newpage 
+
+
+## Córners:
+
+Otro detalle a tener en cuenta es la cantidad de córneres que tuvo cada equipo, 
+lo cual lo muestro a continuación
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+corners_AR <- datos %>% filter(pass.type.name=="Corner" , team.name=="Argentina") 
+corners_FR <- datos %>% filter(pass.type.name=="Corner" , team.name=="France") 
+
+cant_corners_AR <- length(corners_AR$team.name)
+cant_corners_FR <- length(corners_FR$team.name)
+
+corners<-cbind(cant_corners_AR,cant_corners_FR)
+colnames(corners)<-c("Argentina", "Francia")
+rownames(corners)<-"Córners"
+
+corners %>% kbl() %>% kable_classic_2(full_width = F)
+
+
+```
+
+
+## Pases:
+
+En este apartado filtramos de nuestro data.frame original las filas las cuales se 
+refieren a los pases y luego mediante un for creamos cuatro columnas para poder
+trabajar de mejor forma con las cordenadas (x,y) iniciales y finales.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+pases<- datos %>% filter(type.name=="Pass") %>%  select(minute, second, location,
+        under_pressure, possession_team.name, play_pattern.name, team.name, 
+        player.name, pass.length, pass.angle, pass.end_location, pass.recipient.name,
+        pass.height.name, pass.body_part.name, pass.type.name, pass.outcome.name) 
+
+for(i in 1:length(pases$location)){
+  pases$location.x[i] <- pases$location[[i]][1]
+  pases$location.y[i] <- pases$location[[i]][2]
+  pases$end_location.x[i] <- pases$pass.end_location[[i]][1]
+  pases$end_location.y[i] <- pases$pass.end_location[[i]][2]
+  
+}
+```
+
+Ahora creo una tabla para mostrar la cantidad de pases totales,
+exitosos, fallados y la efectividad por equipo. Podemos ver que Argentina tuvo
+mayor cantidad de pases y mayor porentaje de acierto.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+tot_Pas_AR<- datos %>% filter(type.name=="Pass",team.name=="Argentina") %>%
+             count(type.name=="Pass") 
+tot_Pas_AR<- tot_Pas_AR$n
+
+Pas_bien_AR <- datos %>% filter(type.name=="Pass",team.name=="Argentina") %>% 
+              count(is.na(pass.outcome.name)) 
+Pas_bien_AR <- Pas_bien_AR$n[2]  
+
+Pas_fallados_AR<- tot_Pas_AR - Pas_bien_AR
+
+Efect_Pas_AR <- (Pas_bien_AR/tot_Pas_AR)*100
+
+tot_Pas_FR<- datos %>% filter(type.name=="Pass",team.name=="France") %>%
+  count(type.name=="Pass") 
+tot_Pas_FR<- tot_Pas_FR$n
+
+Pas_bien_FR <- datos %>% filter(type.name=="Pass",team.name=="France") %>% 
+  count(is.na(pass.outcome.name)) 
+Pas_bien_FR <- Pas_bien_FR$n[2]  
+
+Pas_fallados_FR<- tot_Pas_FR - Pas_bien_FR
+
+
+Efect_Pas_FR <- (Pas_bien_FR/tot_Pas_FR)*100
+
+t_pases_AR <- c(tot_Pas_AR, Pas_bien_AR,Pas_fallados_AR, Efect_Pas_AR)
+t_pases_FR <- c(tot_Pas_FR, Pas_bien_FR,Pas_fallados_FR, Efect_Pas_FR)
+
+todo_pases <- cbind(t_pases_AR, t_pases_FR)
+colnames(todo_pases) <- c("Argentina","Francia")
+rownames(todo_pases) <- c("Total", "Exitosos","Fallados", "% de acierto")
+
+todo_pases %>% kbl() %>% kable_classic_2(full_width = F)
+
+```
+
+\newpage 
+
+
+## Efectividad de pases por jugador en Argentina
+
+Esta vez creo una tabla en la que aparecen la cantidad de pases, la cantidad de
+pases completados y la efectividad por jugador.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+pases_AR <- pases %>% filter(team.name=="Argentina") 
+
+total_pases_jugador_AR <- pases_AR %>% select(player.name,pass.outcome.name) %>% 
+                          group_by(player.name) %>% summarise(cant_pases=n())
+
+total_pases_compl_jugador_AR <- pases_AR %>% select(player.name,pass.outcome.name) %>%
+                                filter(is.na(pass.outcome.name)) %>% group_by(player.name) %>% 
+                                summarise(cant_pases_compl=n())
+tabla_pases_AR <- data.frame(jugador=total_pases_jugador_AR$player.name, tot.pases=total_pases_jugador_AR$cant_pases, tot.compl.pases=total_pases_compl_jugador_AR$cant_pases_compl) %>% 
+                  mutate(efectivid_pase=(tot.compl.pases/tot.pases)*100)
+  
+tabla_pases_AR <- tabla_pases_AR[order(tabla_pases_AR$tot.pases, decreasing = TRUE), ]
+
+colnames(tabla_pases_AR) <- c("Jugadores", "Pases", "Pases Completados", "Efectividad")
+
+tabla_pases_AR %>% kbl() %>% kable_classic_2(full_width = F)
+
+
+```
+
+Realizo lo mismo para los jugadores de Francia
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+pases_FR <- pases %>% filter(team.name=="France") 
+
+
+total_pases_jugador_FR <- pases_FR %>% select(player.name,pass.outcome.name) %>% 
+                          group_by(player.name) %>% summarise(cant_pases=n())
+
+total_pases_compl_jugador_FR <- pases_FR %>% select(player.name,pass.outcome.name) %>%
+                                filter(is.na(pass.outcome.name)) %>% 
+  group_by(player.name) %>% summarise(cant_pases_compl=n())
+
+tabla_pases_FR <- data.frame(jugador=total_pases_jugador_FR$player.name, tot.pases=total_pases_jugador_FR$cant_pases, tot.compl.pases=total_pases_compl_jugador_FR$cant_pases_compl) %>% 
+                  mutate(efectivid_pase=(tot.compl.pases/tot.pases)*100)
+  
+tabla_pases_FR <- tabla_pases_FR[order(tabla_pases_FR$tot.pases, decreasing = TRUE), ]
+
+colnames(tabla_pases_FR) <- c("Jugadores", "Pases", "Pases Completados",
+                              "Efectividad")
+
+
+tabla_pases_FR %>% kbl() %>% kable_classic_2(full_width = F)
+
+
+```
+
+
+# Pases Argentina:
+
+Realizo un gráfico en el que se vean con puntos todos los pases del equipo Argentino,
+los cuales su resultado se puede distinguir por el color de los puntos
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+create_Pitch(grass_colour = "#EAEAEA", line_colour =  "#000000", 
+             background_colour = "#EAEAEA", goal_colour = "#EAEAEA") +
+  geom_point(data = pases_AR, 
+               aes(x = location.x, y = location.y,
+                   colour=pass.outcome.name), size = 1.5) +
+  labs(title = " Pases Argentina", color="Resultado") +
+  coord_fixed(ratio = 105/100) +
+  theme(legend.position = "bottom")
+```
+
+\newpage 
+
+
+# Pases Francia:
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+create_Pitch(grass_colour = "#EAEAEA", line_colour =  "#000000", 
+             background_colour = "#EAEAEA", goal_colour = "#EAEAEA") +
+  geom_point(data = pases_FR, 
+               aes(x = location.x, y = location.y,
+                   colour=pass.outcome.name), size = 1.5) +
+  labs(title = " Pases Francia", color="Resultado") +
+  coord_fixed(ratio = 105/100) +
+  theme(legend.position = "bottom")
+```
+
+\newpage 
+
+# Pases de Messi:
+
+Ahora vamos a ir al caso particular de Messi, podría realizarse para todos los
+juadores pero por un tema práctico lo realizo para un jugador de cada equipo.
+Realizaré un diagrama de "flecha", en el cual se distinguirá por el color que
+pases fueron acertados y cuales no.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+pases_Messi <- pases %>% filter(player.name=="Lionel Andrés Messi Cuccittini")
+
+create_Pitch(grass_colour = "#EAEAEA", line_colour =  "#000000",
+             background_colour = "#EAEAEA", goal_colour = "#EAEAEA") +
+  geom_segment(data = pases_Messi, 
+               aes(x = location.x, y = location.y,
+                   xend = end_location.x, yend = end_location.y,
+                   colour=pass.outcome.name),
+               lineend = "round", size = 0.8, 
+               arrow = arrow(length = unit(0.08, "inches"))) +
+  labs(title = "Pases de Messi", color="Resultado") +
+  coord_fixed(ratio = 105/100) +
+  theme(legend.position = "bottom")
+
+```
+
+\newpage 
+
+
+# Pases de Mbappé:
+
+Realizamos lo mismo para Mbappé
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+pases_Mbappe <- pases %>% filter(player.name=="Kylian Mbappé Lottin")
+
+create_Pitch(grass_colour = "#EAEAEA", line_colour =  "#000000",
+             background_colour = "#EAEAEA", goal_colour = "#EAEAEA") +
+  geom_segment(data = pases_Mbappe, 
+               aes(x = location.x, y = location.y,
+                   xend = end_location.x, yend = end_location.y,
+                   colour=pass.outcome.name),
+               lineend = "round", size = 0.8, 
+               arrow = arrow(length = unit(0.08, "inches"))) +
+  labs(title = "Mbappe vs Argentina 2018", color="Resultado") +
+  coord_fixed(ratio = 105/100) +
+  theme(legend.position = "bottom")
+
+```
+
+\newpage 
+
+
+## Mapa de presión Argentina
+
+Creo un mapa de presión mediente la función soccerHeatmap() para poder observar 
+en que zonas del mapa Argentina presionó para intentar recuperar la pelota.
+Un posible análisis que se puede hacer a partir de este y el siguiente gráfico es
+que como Argentina presionó más arriba de la cancha logró recuperar más pelotas 
+en esa zona "peligrosa" de la cancha.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+presion_AR <- datos %>% filter(type.name=="Pressure", team.name=="Argentina")
+
+for(i in 1:length(presion_AR$location)){
+  presion_AR$location.x[i] <- presion_AR$location[[i]][1]
+  presion_AR$location.y[i] <- presion_AR$location[[i]][2]
+  presion_AR$end_location.x[i] <- presion_AR$pass.end_location[[i]][1]
+  presion_AR$end_location.y[i] <- presion_AR$pass.end_location[[i]][2]
+  
+}
+
+soccerHeatmap(presion_AR, x = "location.x", y = "location.y",
+    title = "Mapa de presion Argentina")
+```
+
+\newpage 
+
+
+## Mapa de presión Francia.
+
+Podemos ver que Francia realizó la presión más cerca de su arco.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+presion_FR <- datos %>% filter(type.name=="Pressure", team.name=="France")
+
+for(i in 1:length(presion_FR$location)){
+  presion_FR$location.x[i] <- presion_FR$location[[i]][1]
+  presion_FR$location.y[i] <- presion_FR$location[[i]][2]
+  presion_FR$end_location.x[i] <- presion_FR$pass.end_location[[i]][1]
+  presion_FR$end_location.y[i] <- presion_FR$pass.end_location[[i]][2]
+  
+}
+
+soccerHeatmap(presion_FR, x = "location.x", y = "location.y",
+              title = "Mapa de presion Francia")
+```
+
+## Mapa de recuperaciones por equipo
+
+Ahora para poder complementar el gráfico anterior realizo un gráfico de puntos 
+con las recuperaciones de cada equipo. Además realizo una tabla con los seis 
+mayores recuperadores de pelotas.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+recuperaciones <- datos %>% filter(type.name=="Ball Recovery")
+
+cant_recuperaciones_equipo <- recuperaciones %>% select(team.name) %>% 
+  group_by(team.name)   %>%  summarise(recuperaciones=n())
+
+cant_recuperaciones_jugador <- recuperaciones %>% select(player.name) %>%
+  group_by(player.name)   %>%  summarise(recuperaciones=n()) 
+
+cant_recuperaciones_jugador <- cant_recuperaciones_jugador[order(cant_recuperaciones_jugador$recuperaciones, 
+                                                        decreasing = TRUE), ]
+
+mayores_rec<-head(cant_recuperaciones_jugador)
+colnames(mayores_rec)<-c("Jugadores","Recuperaciones")
+
+mayores_rec %>% kbl() %>% kable_classic_2(full_width = F)
+
+
+for(i in 1:length(recuperaciones$location)){
+  recuperaciones$location.x[i] <- recuperaciones$location[[i]][1]
+  recuperaciones$location.y[i] <- recuperaciones$location[[i]][2]
+  recuperaciones$end_location.x[i] <- recuperaciones$pass.end_location[[i]][1]
+  recuperaciones$end_location.y[i] <- recuperaciones$pass.end_location[[i]][2]
+}
+
+create_Pitch(grass_colour = "#EAEAEA", line_colour =  "#000000",
+             background_colour = "#EAEAEA", goal_colour = "#EAEAEA") +
+  geom_point(data = recuperaciones, 
+             aes(x = location.x, y = location.y,
+                 colour=team.name)) +
+  labs(title = "Recuperaciones", color="Resultado") +
+  coord_fixed(ratio = 105/100) +
+  theme(legend.position = "bottom") 
+
+```
+
+\newpage 
+
+
+## Zonas donde aparece Messi
+
+Ahora ya que no tenemos el recorrido que realiza un jugador por GPS, intenté
+realizar algo similar mapeando las zonas donde un jugador (en este caso Messi) 
+aparece en acción. Es decir tuve en cuenta las coordenadas de cada acción que 
+realizó un jugador.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+Messi <- datos %>% filter(player.name=="Lionel Andrés Messi Cuccittini")
+
+for(i in 1:length(Messi$location)){
+  Messi$location.x[i] <- Messi$location[[i]][1]
+  Messi$location.y[i] <- Messi$location[[i]][2]
+}
+
+soccerHeatmap(Messi, x = "location.x", y = "location.y",
+              title = "Apariciones de Messi")
+```
+
+\newpage 
+
+## Zonas donde aparece Mbappé
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+Pogba <- datos %>% filter(player.name=="Paul Pogba", type.name!="Substitution")
+
+for(i in 1:length(Pogba$location)){
+  Pogba$location.x[i] <- Pogba$location[[i]][1]
+  Pogba$location.y[i] <- Pogba$location[[i]][2]
+}
+
+soccerHeatmap(Pogba, x = "location.x", y = "location.y",
+              title = "Pogba vs Francia 2018", 
+              subtitle = "Mapa apariciones Pogba")
+
+
+
+```
+
+\newpage 
+
+## Disparos
+
+En primer lugar creo una tabla con los tiros de cada equipo y los tiros que fueron 
+al arco, en la cual se ve que Fancia tuvo menos tiros pero con mayor éxito.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+tiros_AR <- datos %>% filter(type.name=="Shot", team.name=="Argentina")
+cant_tiros_AR <- length(tiros_AR$location)
+tiros_al_arco_AR <- tiros_AR %>% filter(shot.outcome.name != "Wayward", 
+                  shot.outcome.name != "Off T", shot.outcome.name != "Blocked")
+cant_tiros_al_arco_AR <- length(tiros_al_arco_AR$location)
+
+tot_tiros_AR<-c(cant_tiros_AR,cant_tiros_al_arco_AR)
+
+tiros_FR <- datos %>% filter(type.name=="Shot", team.name=="France")
+cant_tiros_FR <- length(tiros_FR$location)
+tiros_al_arco_FR <- tiros_FR %>% filter(shot.outcome.name != "Wayward",
+                  shot.outcome.name != "Off T", shot.outcome.name != "Blocked")
+cant_tiros_al_arco_FR <- length(tiros_al_arco_FR$location)
+
+tot_tiros_FR<-c(cant_tiros_FR,cant_tiros_al_arco_FR)
+
+tabla_tiros <- cbind(tot_tiros_AR, tot_tiros_FR)
+colnames(tabla_tiros) <- c("Argentina", "France")
+rownames(tabla_tiros) <- c("Total de tiros", "Al arco")
+
+tabla_tiros %>% kbl() %>% kable_classic_2(full_width = F)
+
+
+
+```
+
+
+## Tiros Argentina
+
+Ahora procedo a crear dos gráficos. En uno se distingue por color quien fue el 
+ejecutante y en el otro en que resultó tal disparo.
+Además aprovecho que StatsBomb tiene la variable xG, la cual me da la probabilidad
+de que un tiro termine en gol, entonces la aprovecho utilizandola para el tamaño
+de los puntos.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+for(i in 1:length(tiros_AR$location)){
+  tiros_AR$location.x[i] <- tiros_AR$location[[i]][1]
+  tiros_AR$location.y[i] <- tiros_AR$location[[i]][2]
+  tiros_AR$end_location.x[i] <- tiros_AR$pass.end_location[[i]][1]
+  tiros_AR$end_location.y[i] <- tiros_AR$pass.end_location[[i]][2]
+}
+
+
+create_Pitch(grass_colour = "#EAEAEA", line_colour =  "#000000", 
+             background_colour = "#EAEAEA", goal_colour = "#EAEAEA") +
+  geom_point(data = tiros_AR, 
+             aes(x = location.x, y = location.y,
+                 colour=player.name, size=shot.statsbomb_xg)) +
+  labs(title = "Tiros Argentina 2018") +
+  coord_fixed(ratio = 105/100) +
+  theme(legend.position = "right") 
+
+create_Pitch(grass_colour = "#EAEAEA", line_colour =  "#000000", 
+             background_colour = "#EAEAEA", goal_colour = "#EAEAEA") +
+  geom_point(data = tiros_AR, 
+             aes(x = location.x, y = location.y,
+                 colour=shot.outcome.name,size=shot.statsbomb_xg)) +
+  labs(title = "Tiros Argentina") +
+  coord_fixed(ratio = 105/100) +
+  theme(legend.position = "right") 
+
+```
+
+\newpage 
+
+## Tiros Francia 
+
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+for(i in 1:length(tiros_FR$location)){
+  tiros_FR$location.x[i] <- tiros_FR$location[[i]][1]
+  tiros_FR$location.y[i] <- tiros_FR$location[[i]][2]
+  tiros_FR$end_location.x[i] <- tiros_FR$pass.end_location[[i]][1]
+  tiros_FR$end_location.y[i] <- tiros_FR$pass.end_location[[i]][2]
+}
+
+create_Pitch(grass_colour = "#EAEAEA", line_colour =  "#000000", 
+             background_colour = "#EAEAEA", goal_colour = "#EAEAEA") +
+  geom_point(data = tiros_FR, 
+             aes(x = location.x, y = location.y,
+                 colour=player.name, size=shot.statsbomb_xg)) +
+  labs(title = "Tiros Francia") +
+  coord_fixed(ratio = 105/100) +
+  theme(legend.position = "right") 
+
+create_Pitch(grass_colour = "#EAEAEA", line_colour =  "#000000", 
+             background_colour = "#EAEAEA", goal_colour = "#EAEAEA") +
+  geom_point(data = tiros_FR, 
+             aes(x = location.x, y = location.y,
+                 colour=shot.outcome.name,size=shot.statsbomb_xg)) +
+  labs(title = "Tiros Francia") +
+  coord_fixed(ratio = 105/100) +
+  theme(legend.position = "right") 
+```
+
+Por último mostararé quienes hicieron los goles y en que minuto.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+goles<- datos %>% filter(shot.outcome.name=="Goal") %>% 
+          select(minute, player.name, team.name)
+
+colnames(goles) <- c("Minuto", "Jugador", "Equipo") 
+
+goles %>% kbl() %>% kable_classic_2(full_width = F)
+
+```
+
+
+
+
+
+
+
+
